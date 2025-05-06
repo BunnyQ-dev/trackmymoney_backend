@@ -9,9 +9,19 @@ from sqlalchemy.orm import sessionmaker, Session
 from passlib.context import CryptContext
 from datetime import datetime, timedelta
 from jose import jwt, JWTError
+from fastapi.middleware.cors import CORSMiddleware
+
 
 # FastAPI app initialization
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Database setup
 DATABASE_URL = "sqlite:///./test.db"
@@ -48,8 +58,8 @@ class Transaction(Base):
     __tablename__ = "transactions"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    category_id = Column(Integer, ForeignKey("categories.id"))  # Зв'язок із категоріями
-    type = Column(String)  # "income" або "expense"
+    category_id = Column(Integer, ForeignKey("categories.id"))
+    type = Column(String)
     amount = Column(Float)
     date = Column(DateTime, default=datetime.utcnow)
 
@@ -65,8 +75,7 @@ class Category(Base):
     __tablename__ = "categories"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True)
-    is_income = Column(Boolean, default=False)
-
+    is_income = Column(Boolean, default=False)  
 Base.metadata.create_all(bind=engine)
 
 # Dependency
@@ -103,7 +112,7 @@ class CategoryResponse(BaseModel):
         from_attributes = True
 
 class TransactionCreate(BaseModel):
-    category_id: int
+    category_id: int  # Тепер передається ID категорії
     amount: float
 
 class TransactionResponse(BaseModel):
@@ -193,14 +202,12 @@ def get_balance(db: Session = Depends(get_db), current_user: User = Depends(get_
     return {"balance": balance.balance}
 
 @app.post("/transactions/", response_model=TransactionResponse)
-def create_transaction(transaction: TransactionCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user))
+def create_transaction(transaction: TransactionCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     db_category = db.query(Category).filter(Category.id == transaction.category_id).first()
     if not db_category:
         raise HTTPException(status_code=400, detail="Category not found")
 
-
     transaction_type = "income" if db_category.is_income else "expense"
-
 
     db_transaction = Transaction(
         user_id=current_user.id,
@@ -212,14 +219,12 @@ def create_transaction(transaction: TransactionCreate, db: Session = Depends(get
     db.commit()
     db.refresh(db_transaction)
 
-
     balance = db.query(Balance).filter(Balance.user_id == current_user.id).first()
     if transaction_type == "income":
         balance.balance += transaction.amount
     elif transaction_type == "expense":
         balance.balance -= transaction.amount
     db.commit()
-
 
     return TransactionResponse(
         id=db_transaction.id,
@@ -261,11 +266,11 @@ def add_funds_to_goal(goal_id: int, amount: float, db: Session = Depends(get_db)
     goal = db.query(Goal).filter(Goal.id == goal_id, Goal.user_id == current_user.id).first()
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
-
+    
     balance = db.query(Balance).filter(Balance.user_id == current_user.id).first()
     if balance.balance < amount:
         raise HTTPException(status_code=400, detail="Insufficient balance")
-
+    
     balance.balance -= amount
     goal.saved_amount += amount
     
@@ -338,11 +343,11 @@ def delete_goal(goal_id: int, db: Session = Depends(get_db), current_user: User 
     goal = db.query(Goal).filter(Goal.id == goal_id, Goal.user_id == current_user.id).first()
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
-
+    
     if goal.saved_amount > 0:
         balance = db.query(Balance).filter(Balance.user_id == current_user.id).first()
         balance.balance += goal.saved_amount
-
+    
     db.delete(goal)
     db.commit()
     
